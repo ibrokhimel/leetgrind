@@ -45,3 +45,8 @@ def test_returns_empty_on_unparseable_literals():
     html = """<pre><strong>Input:</strong> root = [1,null,2,3]
 <strong>Output:</strong> &lt;some tree&gt;</pre>"""
     assert extract_examples(make(html)) == ()
+
+def test_returns_empty_on_unhashable_literal():
+    html = """<pre><strong>Input:</strong> nums = [1,2]
+<strong>Output:</strong> {[1,2]: 3}</pre>"""
+    assert extract_examples(make(html)) == ()

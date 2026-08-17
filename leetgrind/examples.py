@@ -27,7 +27,7 @@ def _strip(fragment: str) -> str:
 def _is_literal(src: str) -> bool:
     try:
         ast.literal_eval(src)
-    except (ValueError, SyntaxError, MemoryError, RecursionError):
+    except Exception:
         return False
     return True
 

@@ -6,6 +6,7 @@ venv/
 *.egg-info/
 dist/
 build/
+!build/make_shortcut.ps1
 .claude-flow/
 .claude/
 .superpowers/

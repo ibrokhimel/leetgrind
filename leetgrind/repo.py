@@ -1,6 +1,5 @@
 import subprocess
 from pathlib import Path
-import os
 
 GITIGNORE = "__pycache__/\n.pytest_cache/\n.lc/\n*.pyc\n"
 GITATTRIBUTES = "* text=auto eol=lf\n"
@@ -22,18 +21,6 @@ def init_repo(repo: Path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").is_dir():
         git(repo, "init", "-q", "--initial-branch", "main")
-        # Create empty commit to establish HEAD, using env vars for identity
-        env = os.environ.copy()
-        env.update({
-            "GIT_AUTHOR_NAME": "LeetGrind",
-            "GIT_AUTHOR_EMAIL": "leetgrind@local",
-            "GIT_COMMITTER_NAME": "LeetGrind",
-            "GIT_COMMITTER_EMAIL": "leetgrind@local",
-        })
-        result = subprocess.run(["git", "-C", str(repo), "commit", "--allow-empty", "-q", "-m", "Initial commit"],
-                                env=env, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise GitError(result.stderr.strip() or "Failed to create initial commit")
     (repo / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
     (repo / ".gitattributes").write_text(GITATTRIBUTES, encoding="utf-8")
 

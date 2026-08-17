@@ -10,7 +10,7 @@ def repo(tmp_path):
 
 def test_init_creates_repo_on_main(repo):
     assert (repo / ".git").is_dir()
-    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    assert git(repo, "branch", "--show-current") == "main"
 
 def test_init_writes_gitignore_and_gitattributes(repo):
     assert "__pycache__/" in (repo / ".gitignore").read_text()

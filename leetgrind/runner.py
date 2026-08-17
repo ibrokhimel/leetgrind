@@ -20,7 +20,7 @@ def run_tests(folder: Path) -> TestOutcome:
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "test_solution.py", "-q",
          "-p", "no:cacheprovider", "--no-header"],
-        cwd=folder, capture_output=True, text=True)
+        cwd=folder, capture_output=True, text=True, encoding="utf-8", errors="replace")
     output = result.stdout + result.stderr
     match = _SUMMARY_RE.search(output)
     if match:
@@ -32,5 +32,5 @@ def run_tests(folder: Path) -> TestOutcome:
         passed=result.returncode == 0,
         summary=summary,
         output=output,
-        skipped="skipped" in output and "passed" not in output and "failed" not in output,
+        skipped="skipped" in summary and "passed" not in summary and "failed" not in summary,
     )

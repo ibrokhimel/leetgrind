@@ -5,7 +5,8 @@ __pycache__/
 venv/
 *.egg-info/
 dist/
-build/
+build/*
+!build/make_shortcut.ps1
 .claude-flow/
 .claude/
 .superpowers/

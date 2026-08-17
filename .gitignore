@@ -7,3 +7,5 @@ venv/
 dist/
 build/
 .claude-flow/
+.claude/
+.superpowers/

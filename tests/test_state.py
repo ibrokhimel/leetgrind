@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import pytest
 from leetgrind.state import (ActiveProblem, load_active, save_active, clear_active,
                              elapsed_minutes, cache_get, cache_put)
 
@@ -35,3 +36,15 @@ def test_cache_roundtrip(tmp_path):
     assert cache_get(tmp_path, "two-sum") is None
     cache_put(tmp_path, "two-sum", {"a": 1})
     assert cache_get(tmp_path, "two-sum") == {"a": 1}
+
+@pytest.mark.parametrize("raw", ["[]", "null", "42", '"x"'])
+def test_non_object_state_file_returns_none(tmp_path, raw):
+    path = tmp_path / ".lc" / "state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(raw, encoding="utf-8")
+    assert load_active(tmp_path) is None
+
+def test_read_paths_do_not_create_the_lc_directory(tmp_path):
+    assert load_active(tmp_path) is None
+    assert cache_get(tmp_path, "two-sum") is None
+    assert not (tmp_path / ".lc").exists()

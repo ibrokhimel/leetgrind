@@ -17,14 +17,20 @@ class ActiveProblem:
     schema: int = SCHEMA
 
 
-def _dir(repo: Path) -> Path:
-    path = repo / ".lc"
+def _lc_dir_path(repo: Path) -> Path:
+    """Compute path to .lc directory without creating it."""
+    return repo / ".lc"
+
+
+def _lc_dir(repo: Path) -> Path:
+    """Get .lc directory, creating it if needed."""
+    path = _lc_dir_path(repo)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def _state_file(repo: Path) -> Path:
-    return _dir(repo) / "state.json"
+    return _lc_dir_path(repo) / "state.json"
 
 
 def load_active(repo: Path) -> ActiveProblem | None:
@@ -33,7 +39,7 @@ def load_active(repo: Path) -> ActiveProblem | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("schema") != SCHEMA:
+        if not isinstance(data, dict) or data.get("schema") != SCHEMA:
             return None
         return ActiveProblem(**data)
     except (json.JSONDecodeError, TypeError):
@@ -41,6 +47,7 @@ def load_active(repo: Path) -> ActiveProblem | None:
 
 
 def save_active(repo: Path, active: ActiveProblem) -> None:
+    _lc_dir(repo)  # Ensure directory exists
     _state_file(repo).write_text(json.dumps(asdict(active), indent=2), encoding="utf-8")
 
 
@@ -55,7 +62,7 @@ def elapsed_minutes(active: ActiveProblem) -> int:
 
 
 def cache_get(repo: Path, slug: str) -> dict | None:
-    path = _dir(repo) / "cache" / f"{slug}.json"
+    path = _lc_dir_path(repo) / "cache" / f"{slug}.json"
     if not path.exists():
         return None
     try:
@@ -65,6 +72,6 @@ def cache_get(repo: Path, slug: str) -> dict | None:
 
 
 def cache_put(repo: Path, slug: str, payload: dict) -> None:
-    path = _dir(repo) / "cache" / f"{slug}.json"
+    path = _lc_dir(repo) / "cache" / f"{slug}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")

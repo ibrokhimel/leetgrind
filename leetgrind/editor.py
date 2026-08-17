@@ -9,8 +9,22 @@ _CLOSE_PS = (
 )
 
 
+def _escape_powershell_string(s: str) -> str:
+    """Escape a string for safe use in PowerShell -like pattern matching."""
+    # Escape single quotes by doubling them
+    s = s.replace("'", "''")
+    # Escape wildcard metacharacters with backticks
+    s = s.replace("*", "`*")
+    s = s.replace("?", "`?")
+    s = s.replace("[", "`[")
+    return s
+
+
 def code_available() -> bool:
-    return shutil.which("code") is not None
+    try:
+        return shutil.which("code") is not None
+    except Exception:
+        return False
 
 
 def open_problem(folder: Path) -> bool:
@@ -28,9 +42,10 @@ def open_problem(folder: Path) -> bool:
 def close_window(folder_name: str) -> bool:
     """Best-effort graceful close of the VS Code window for `folder_name`."""
     try:
+        escaped_name = _escape_powershell_string(folder_name)
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             _CLOSE_PS.format(name=folder_name)],
+             _CLOSE_PS.format(name=escaped_name)],
             check=False, capture_output=True)
         return result.returncode == 0
     except OSError:

@@ -29,50 +29,32 @@ def github_emails() -> list[str] | None:
         return None
 
 
-def _has_local_git_config(repo_path) -> tuple[str, str]:
-    """Check if repo has local git config for name and email."""
-    try:
-        result_name = subprocess.run(["git", "-C", str(repo_path), "config", "--local", "user.name"],
-                                     capture_output=True, text=True)
-        result_email = subprocess.run(["git", "-C", str(repo_path), "config", "--local", "user.email"],
-                                      capture_output=True, text=True)
-        name = result_name.stdout.strip() if result_name.returncode == 0 else ""
-        email = result_email.stdout.strip() if result_email.returncode == 0 else ""
-        return name, email
-    except (OSError, ValueError):
-        return "", ""
-
-
 def run_checks(cfg: Config | None) -> list[Check]:
     checks = [Check("configured", cfg is not None,
                     "config found" if cfg else "no config yet",
                     "" if cfg else "run the first-run wizard")]
 
-    if cfg:
-        local_name, local_email = _has_local_git_config(cfg.repo_path)
-        has_identity = bool(local_name and local_email)
-        detail = f"{local_name} <{local_email}>" if local_email else "user.name/user.email unset"
-    else:
-        has_identity = False
-        local_email = ""
-        detail = "user.name/user.email unset"
+    name, email = identity(cfg.repo_path) if cfg else ("", "")
+    has_identity = bool(name and email)
+    detail = f"{name} <{email}>" if email else "user.name/user.email unset"
 
     checks.append(Check("git identity set", has_identity, detail,
-                        'git config --global user.email "you@example.com"'))
+                        'git config user.email "you@example.com"'))
 
     emails = github_emails()
     if emails is None:
         checks.append(Check("commit email counts on GitHub", False,
                             "cannot read GitHub emails (missing 'user' scope)", REFRESH))
-    elif local_email and local_email in emails:
+    elif email and email in emails:
         checks.append(Check("commit email counts on GitHub", True,
-                            f"{local_email} is verified on your account"))
+                            f"{email} is verified on your account"))
     else:
         checks.append(Check(
             "commit email counts on GitHub", False,
-            f"{local_email or '(unset)'} is NOT a verified email on your GitHub account - "
+            f"{email or '(unset)'} is NOT a verified email on your GitHub account - "
             "commits will not appear on your contribution graph",
-            f'git config --global user.email "{emails[0]}"' if emails else REFRESH))
+            f'git config user.email "{emails[0]}"' if emails else
+            "Add a verified email to your GitHub account (github.com/settings/emails)"))
 
     checks.append(Check("VS Code on PATH", code_available(),
                         "found" if code_available() else "`code` not found",

@@ -53,3 +53,10 @@ def test_paid_only_problem_has_no_stub():
     assert p.is_paid_only is True
     assert p.stub is None
     assert p.content_html is None
+
+@respx.mock
+def test_fetch_problem_raises_on_non_dict_payload():
+    respx.post("https://leetcode.com/graphql").mock(
+        return_value=httpx.Response(200, json=[]))
+    with pytest.raises(LeetCodeUnavailable):
+        fetch_problem("two-sum")

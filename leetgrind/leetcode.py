@@ -38,10 +38,10 @@ def _post(query: str, variables: dict, client: httpx.Client | None) -> dict:
 
 def fetch_problem(slug: str, *, client: httpx.Client | None = None) -> Problem:
     payload = _post(QUESTION_QUERY, {"titleSlug": slug}, client)
-    q = (payload.get("data") or {}).get("question")
-    if not q:
-        raise LeetCodeUnavailable(f"no such problem: {slug}")
     try:
+        q = (payload.get("data") or {}).get("question")
+        if not q:
+            raise LeetCodeUnavailable(f"no such problem: {slug}")
         snippets = q.get("codeSnippets") or []
         stub = next((s["code"] for s in snippets if s["langSlug"] == "python3"), None)
         return Problem(
@@ -54,7 +54,7 @@ def fetch_problem(slug: str, *, client: httpx.Client | None = None) -> Problem:
             stub=stub,
             content_html=q.get("content"),
         )
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise LeetCodeUnavailable(f"unexpected response shape: {exc}") from exc
 
 

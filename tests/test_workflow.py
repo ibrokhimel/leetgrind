@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 from leetgrind import workflow, leetcode, editor
 from leetgrind.config import Config
@@ -10,6 +12,21 @@ P = Problem(id=1, slug="two-sum", title="Two Sum", difficulty="Easy",
             tags=("array",), is_paid_only=False,
             stub="class Solution:\n    def twoSum(self, nums, target):\n        return [0,1]\n",
             content_html=None)
+
+# A distinctive sentinel embedded in the description HTML, plus a real
+# example block so extract_examples produces non-empty examples. Used to
+# prove the cache never persists description text, and that a cache hit
+# reproduces the same scaffold a cache miss would (examples survive).
+SENTINEL = "SENTINEL_MUST_NEVER_BE_WRITTEN_TO_THE_CACHE_FILE"
+CONTENT_WITH_EXAMPLE = f"""<p>{SENTINEL}</p>
+<p><strong>Example 1:</strong></p>
+<pre><strong>Input:</strong> nums = [2,7,11,15], target = 9
+<strong>Output:</strong> [0,1]</pre>"""
+
+P2 = Problem(id=7, slug="two-sum", title="Two Sum", difficulty="Easy",
+             tags=("array",), is_paid_only=False,
+             stub="class Solution:\n    def twoSum(self, nums, target):\n        return [0,1]\n",
+             content_html=CONTENT_WITH_EXAMPLE)
 
 
 @pytest.fixture
@@ -92,6 +109,37 @@ def test_start_caches_the_fetch_response_and_reuses_it(cfg, monkeypatch):
     workflow.park_problem(cfg)
     workflow.start_problem(cfg, "two-sum")
     assert calls == ["two-sum"]
+
+
+def test_start_never_writes_description_text_to_the_cache_file(cfg, monkeypatch):
+    monkeypatch.setattr(workflow, "fetch_problem", lambda slug, **kw: P2)
+    workflow.start_problem(cfg, "two-sum")
+    cache_file = cfg.repo_path / ".lc" / "cache" / "two-sum.json"
+    assert cache_file.exists()
+    raw = cache_file.read_text(encoding="utf-8")
+    assert SENTINEL not in raw
+
+
+def test_cache_hit_produces_the_same_scaffold_as_a_cache_miss(cfg, monkeypatch):
+    monkeypatch.setattr(workflow, "fetch_problem", lambda slug, **kw: P2)
+    active = workflow.start_problem(cfg, "two-sum")
+    miss_test = (cfg.repo_path / active.folder / "test_solution.py").read_text()
+    assert "test_examples" in miss_test
+    assert "pytest.skip" not in miss_test
+    workflow.park_problem(cfg)
+
+    # Force a fresh render on the next start: without this, start_problem's
+    # "only write if missing" guard would just leave the first render in
+    # place and this test would pass even if the cache hit degraded to ().
+    shutil.rmtree(cfg.repo_path / active.folder)
+
+    def fail_fetch(slug, **kw):
+        raise AssertionError("fetch_problem must not be called on a cache hit")
+
+    monkeypatch.setattr(workflow, "fetch_problem", fail_fetch)
+    workflow.start_problem(cfg, "two-sum")
+    hit_test = (cfg.repo_path / active.folder / "test_solution.py").read_text()
+    assert hit_test == miss_test
 
 
 # --- Ruling 2: .gitignore / .gitattributes must be committed with the first start ---

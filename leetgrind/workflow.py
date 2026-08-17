@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import editor
 from .config import Config
-from .examples import extract_examples
+from .examples import Example, extract_examples
 from .leetcode import LeetCodeUnavailable, fetch_problem
 from .models import Problem
 from .repo import commit_paths, push
@@ -37,36 +37,40 @@ def fallback_problem(slug: str, number: int) -> Problem:
                    tags=(), is_paid_only=False, stub=None, content_html=None)
 
 
-def _problem_from_cache(payload: dict) -> Problem | None:
-    """Reconstruct a cached GraphQL response. None on any shape mismatch,
-    which is treated as a cache miss rather than a crash."""
+def _from_cache(payload: dict) -> tuple[Problem, tuple[Example, ...]] | None:
+    """None on a shape mismatch - a cache miss, not a crash."""
     try:
-        return Problem(
-            id=payload["id"], slug=payload["slug"], title=payload["title"],
-            difficulty=payload["difficulty"], tags=tuple(payload["tags"]),
-            is_paid_only=payload["is_paid_only"], stub=payload["stub"],
-            content_html=payload["content_html"])
+        p = payload["problem"]
+        problem = Problem(id=p["id"], slug=p["slug"], title=p["title"],
+                          difficulty=p["difficulty"], tags=tuple(p["tags"]),
+                          is_paid_only=p["is_paid_only"], stub=p["stub"], content_html=None)
+        examples = tuple(Example(args=tuple(e["args"]), expected=e["expected"])
+                         for e in payload["examples"])
+        return problem, examples
     except (KeyError, TypeError):
         return None
 
 
-def _fetch_with_cache(repo: Path, slug: str, number: int | None) -> Problem:
-    """Serve a cached GraphQL response when we have one; otherwise fetch and
-    cache the result (task-11 ruling 1: the 429 mitigation lives here, not in
-    leetcode.py, which stays a pure network client)."""
+def _fetch_with_cache(repo: Path, slug: str,
+                      number: int | None) -> tuple[Problem, tuple[Example, ...]]:
+    """Cache lives here per ruling 1 (leetcode.py stays a pure network client).
+    A hit skips extract_examples - no HTML to parse. Never persists
+    content_html on either path - extract_examples is its only consumer."""
     cached = cache_get(repo, slug)
-    problem = _problem_from_cache(cached) if cached is not None else None
-    if problem is not None:
-        return problem
+    hit = _from_cache(cached) if cached is not None else None
+    if hit is not None:
+        return hit
 
     try:
         problem = fetch_problem(slug)
     except LeetCodeUnavailable:
         if number is None:
             raise
-        return fallback_problem(slug, number)
-    cache_put(repo, slug, asdict(problem))
-    return problem
+        return fallback_problem(slug, number), ()
+    examples = extract_examples(problem)
+    data = asdict(problem) | {"content_html": None}
+    cache_put(repo, slug, {"problem": data, "examples": [asdict(e) for e in examples]})
+    return problem, examples
 
 
 def start_problem(cfg: Config, text: str, *, number: int | None = None) -> ActiveProblem:
@@ -74,11 +78,11 @@ def start_problem(cfg: Config, text: str, *, number: int | None = None) -> Activ
         raise ProblemActive("park or resume the active problem first")
 
     slug = parse_slug(text)
-    problem = _fetch_with_cache(cfg.repo_path, slug, number)
+    problem, examples = _fetch_with_cache(cfg.repo_path, slug, number)
 
     folder = cfg.repo_path / problem.folder_name
     folder.mkdir(parents=True, exist_ok=True)
-    for name, body in render_files(problem, extract_examples(problem)).items():
+    for name, body in render_files(problem, examples).items():
         target = folder / name
         if not target.exists():
             target.write_text(body, encoding="utf-8")

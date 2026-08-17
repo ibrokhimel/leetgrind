@@ -60,7 +60,8 @@ def render_files(problem: Problem, examples: tuple[Example, ...]) -> dict[str, s
 
     if examples:
         rows = "".join(
-            f"    (({', '.join(e.args)}), {e.expected}),\n" for e in examples)
+            f"    (({e.args[0] + ',' if len(e.args) == 1 else ', '.join(e.args)}), {e.expected}),\n"
+            for e in examples)
         tests = _TEST_HEAD + _CASE_BODY.format(
             cases=rows, method=_method_name(problem.stub))
     else:

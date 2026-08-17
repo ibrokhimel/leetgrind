@@ -36,3 +36,8 @@ def test_paid_only_falls_back_to_a_generic_stub():
     paid = Problem(id=2, slug="x", title="X", difficulty="Hard", tags=(),
                    is_paid_only=True, stub=None, content_html=None)
     assert "class Solution" in render_files(paid, ())["solution.py"]
+
+def test_single_argument_example_renders_a_real_tuple():
+    ex = (Example(args=("[1,2,3]",), expected="5"),)
+    out = render_files(P, ex)["test_solution.py"]
+    assert "(([1,2,3],), 5)" in out

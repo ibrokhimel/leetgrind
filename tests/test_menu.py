@@ -4,7 +4,7 @@ import pytest
 from leetgrind import editor, menu, workflow
 from leetgrind.config import Config
 from leetgrind.models import Problem
-from leetgrind.repo import git, init_repo
+from leetgrind.repo import GitError, git, init_repo
 from leetgrind.runner import TestOutcome as _Outcome
 from leetgrind.state import load_active
 
@@ -142,6 +142,8 @@ def test_main_runs_the_first_run_wizard_when_unconfigured(tmp_path, monkeypatch)
     repo = tmp_path / "solutions"
     monkeypatch.setattr(questionary, "path", lambda *a, **kw: _Ask(str(repo)))
     monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(False))
+    # The remote step must never reach real `gh` or a real TTY from a test.
+    monkeypatch.setattr(questionary, "text", lambda *a, **kw: _Ask(None))
     _queue(monkeypatch, "select", ["Quit"])
     menu.main()
     assert (repo / ".git").is_dir()
@@ -166,6 +168,7 @@ def test_ensure_config_treats_an_aborted_push_prompt_as_a_safe_default(
     repo = tmp_path / "solutions"
     monkeypatch.setattr(questionary, "path", lambda *a, **kw: _Ask(str(repo)))
     monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(None))
+    monkeypatch.setattr(questionary, "text", lambda *a, **kw: _Ask(None))
     cfg = menu._ensure_config()
     assert cfg is not None
     assert cfg.auto_push is False
@@ -177,3 +180,137 @@ def test_main_exits_cleanly_when_the_first_run_prompt_is_aborted(
     monkeypatch.setattr(questionary, "path", lambda *a, **kw: _Ask(None))
     monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(True))
     menu.main()  # must not raise, and must not reach the "What now?" select
+
+
+# --- I2: a stale active problem must not soft-lock the menu. Without Resume
+#     and Park, start_problem raises ProblemActive forever and a shortcut-only
+#     user has no terminal to escape from. ---
+
+def _capture_choices(monkeypatch, seen):
+    def capture(message, choices, *a, **kw):
+        seen["choices"] = choices
+        return _Ask("Quit")
+    monkeypatch.setattr(questionary, "select", capture)
+
+
+def test_menu_offers_resume_and_park_when_a_problem_is_active(cfg, monkeypatch):
+    workflow.start_problem(cfg, "two-sum")
+    monkeypatch.setattr(menu, "load_config", lambda: cfg)
+    seen = {}
+    _capture_choices(monkeypatch, seen)
+    menu.main()
+    assert any(c.startswith("Resume 1: Two Sum") for c in seen["choices"])
+    assert any(c.startswith("Park 1") for c in seen["choices"])
+
+
+def test_menu_hides_resume_and_park_when_nothing_is_active(cfg, monkeypatch):
+    monkeypatch.setattr(menu, "load_config", lambda: cfg)
+    seen = {}
+    _capture_choices(monkeypatch, seen)
+    menu.main()
+    assert seen["choices"] == ["Start coding", "Today's daily", "Doctor", "Quit"]
+
+
+def test_menu_park_clears_a_stale_active_problem(cfg, monkeypatch):
+    workflow.start_problem(cfg, "two-sum")
+    monkeypatch.setattr(menu, "load_config", lambda: cfg)
+    _queue(monkeypatch, "select", ["Park 1 — give up for now", "Quit"])
+    menu.main()
+    assert load_active(cfg.repo_path) is None
+
+
+def test_menu_resume_re_enters_the_solve_loop(cfg, monkeypatch):
+    workflow.start_problem(cfg, "two-sum")
+    monkeypatch.setattr(menu, "load_config", lambda: cfg)
+    monkeypatch.setattr(menu, "run_tests",
+                        lambda folder: _Outcome(True, "1 passed", "", False))
+    _queue(monkeypatch, "select",
+           ["Resume 1: Two Sum", "Done — test and commit", "Quit"])
+    _queue(monkeypatch, "text", ["hash map", "O(n)", "O(n)"])
+    menu.main()
+    assert load_active(cfg.repo_path) is None
+    assert git(cfg.repo_path, "log", "-1", "--pretty=%s").startswith("Solve 1:")
+
+
+# --- I3: fetch_daily() sat outside main()'s try, so LeetCodeUnavailable killed
+#     the process. cli.daily already degraded correctly; align them. ---
+
+def test_menu_daily_degrades_when_leetcode_is_unavailable(cfg, monkeypatch, capsys):
+    from leetgrind.leetcode import LeetCodeUnavailable
+
+    def boom():
+        raise LeetCodeUnavailable("timeout")
+    monkeypatch.setattr(menu, "load_config", lambda: cfg)
+    monkeypatch.setattr(menu, "fetch_daily", boom)
+    _queue(monkeypatch, "select", ["Today's daily", "Quit"])
+    menu.main()  # must not raise
+    assert "Could not reach LeetCode" in capsys.readouterr().out
+
+
+# --- I4: a git failure mid-finish must be reported, not tracebacked, and must
+#     leave the attempt active so the user can retry. ---
+
+def test_solve_loop_reports_a_git_failure_instead_of_crashing(cfg, monkeypatch, capsys):
+    active = workflow.start_problem(cfg, "two-sum")
+
+    def boom(*a, **k):
+        raise GitError("fatal: Unable to create '.git/index.lock'")
+    monkeypatch.setattr(workflow, "finish_problem", boom)
+    monkeypatch.setattr(menu, "run_tests",
+                        lambda folder: _Outcome(True, "1 passed", "", False))
+    _queue(monkeypatch, "select", ["Done — test and commit"])
+    _queue(monkeypatch, "text", ["hash map", "O(n)", "O(n)"])
+    menu._solve_loop(cfg, active)  # must not raise
+    out = capsys.readouterr().out
+    assert "index.lock" in out
+    assert load_active(cfg.repo_path) is not None
+
+
+# --- I5: the menu must still draw when the solutions repo has been moved. ---
+
+def test_header_survives_a_missing_solutions_repo(tmp_path):
+    gone = Config(repo_path=tmp_path / "not-there")
+    assert menu._header(gone) == "0 solved · 0 day streak"
+
+
+# --- C1: nothing created a remote, so commits never reached GitHub. These
+#     exercise the decision logic; a real `gh repo create` is never run. ---
+
+def test_ensure_remote_falls_back_to_a_pasted_url_when_gh_declined(cfg, monkeypatch):
+    monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(False))
+    monkeypatch.setattr(questionary, "text",
+                        lambda *a, **kw: _Ask("https://github.com/u/s.git"))
+    monkeypatch.setattr(menu, "create_github_repo",
+                        lambda *a, **k: pytest.fail("gh must not run when declined"))
+    menu._ensure_remote(cfg)
+    assert git(cfg.repo_path, "remote", "get-url", "origin") == "https://github.com/u/s.git"
+
+
+def test_ensure_remote_creates_a_public_repo_when_accepted(cfg, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(True))
+    monkeypatch.setattr(questionary, "text",
+                        lambda *a, **kw: pytest.fail("must not fall back after success"))
+    monkeypatch.setattr(menu, "create_github_repo",
+                        lambda repo, public=True: seen.update(repo=repo, public=public)
+                        or (True, "created"))
+    menu._ensure_remote(cfg)
+    assert seen["repo"] == cfg.repo_path
+    assert seen["public"] is True
+
+
+def test_ensure_remote_is_a_no_op_when_origin_already_exists(cfg, monkeypatch):
+    git(cfg.repo_path, "remote", "add", "origin", "https://example.com/x.git")
+    monkeypatch.setattr(questionary, "confirm",
+                        lambda *a, **kw: pytest.fail("must not re-prompt"))
+    menu._ensure_remote(cfg)
+
+
+def test_ensure_remote_falls_back_to_a_url_when_gh_fails(cfg, monkeypatch):
+    monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(True))
+    monkeypatch.setattr(questionary, "text",
+                        lambda *a, **kw: _Ask("git@github.com:u/s.git"))
+    monkeypatch.setattr(menu, "create_github_repo",
+                        lambda *a, **k: (False, "`gh` is not installed"))
+    menu._ensure_remote(cfg)
+    assert git(cfg.repo_path, "remote", "get-url", "origin") == "git@github.com:u/s.git"

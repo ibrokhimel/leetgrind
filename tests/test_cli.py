@@ -152,8 +152,108 @@ def test_park_reports_no_active_problem(cfg, monkeypatch):
 def test_undo_reports_git_error_cleanly(cfg, monkeypatch):
     def boom(repo):
         raise GitError("no commits yet")
-    monkeypatch.setattr(cli, "undo_last", boom)
+    monkeypatch.setattr(cli, "last_subject", boom)
     result = runner.invoke(cli.app, ["undo"])
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
     assert "no commits yet" in result.stdout.lower()
+
+
+# --- I1: `new` -> `undo` would delete the Start but leave state.json pointing at
+#     the problem, so the next `done` yields a Solve with no Start. Refuse. ---
+
+def test_undo_refuses_to_delete_the_active_problems_start_commit(cfg, monkeypatch):
+    from leetgrind.state import save_active
+    save_active(cfg.repo_path,
+                ActiveProblem(1, "two-sum", "Two Sum", "Easy", "0001-two-sum", "x"))
+    monkeypatch.setattr(cli, "last_subject", lambda repo: "Start 1: Two Sum (Easy)")
+    def must_not_run(repo):
+        raise AssertionError("undo_last must not run on the active Start commit")
+    monkeypatch.setattr(cli, "undo_last", must_not_run)
+    result = runner.invoke(cli.app, ["undo"])
+    assert result.exit_code == 1
+    assert "lc park" in result.stdout
+
+
+def test_undo_still_works_on_an_unrelated_commit(cfg, monkeypatch):
+    from leetgrind.state import save_active
+    save_active(cfg.repo_path,
+                ActiveProblem(2, "add-two", "Add Two", "Easy", "0002-add-two", "x"))
+    monkeypatch.setattr(cli, "last_subject", lambda repo: "Start 1: Two Sum (Easy)")
+    monkeypatch.setattr(cli, "undo_last", lambda repo: "Start 1: Two Sum (Easy)")
+    assert runner.invoke(cli.app, ["undo"]).exit_code == 0
+
+
+# --- C2: `lc` with no arguments must open the menu. The desktop shortcut runs
+#     exactly this; without a callback Typer falls through to Click's help. ---
+
+def test_no_arguments_opens_the_menu(monkeypatch):
+    from leetgrind import menu
+    opened = []
+    monkeypatch.setattr(menu, "main", lambda: opened.append(True))
+    result = runner.invoke(cli.app, [])
+    assert opened == [True], "`lc` with no args must invoke menu.main()"
+    assert result.exit_code == 0
+    assert "Usage:" not in result.stdout
+
+
+def test_subcommands_still_bypass_the_menu(cfg, monkeypatch):
+    from leetgrind import menu
+    def must_not_open():
+        raise AssertionError("a subcommand must not open the menu")
+    monkeypatch.setattr(menu, "main", must_not_open)
+    monkeypatch.setattr(doctor, "run_checks", lambda c: [doctor.Check("x", True, "fine")])
+    assert runner.invoke(cli.app, ["doctor"]).exit_code == 0
+
+
+# --- I4: GitError must be rendered, never tracebacked, at every entry point. ---
+
+@pytest.mark.parametrize("target,args", [
+    ("start_problem", ["new", "two-sum"]),
+    ("finish_problem", ["done", "--approach", "x", "--time", "O(n)",
+                        "--space", "O(1)", "--force"]),
+    ("park_problem", ["park"]),
+])
+def test_git_failures_are_reported_not_tracebacked(cfg, monkeypatch, target, args):
+    def boom(*a, **k): raise GitError("fatal: Unable to create '.git/index.lock'")
+    monkeypatch.setattr(workflow, target, boom)
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "GitError escaped as a traceback"
+    assert "index.lock" in result.stdout
+
+
+# --- M5: an empty approach must not produce `Solve 1: Two Sum (, O(n))`. ---
+
+def test_done_substitutes_na_for_an_empty_approach(cfg, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(workflow, "finish_problem",
+                        lambda c, a, t, s: seen.update(a=a, t=t, s=s) or "Solve 1: x")
+    result = runner.invoke(cli.app, ["done", "--approach", "", "--time", "",
+                                     "--space", "", "--force"])
+    assert result.exit_code == 0
+    assert seen == {"a": "n/a", "t": "n/a", "s": "n/a"}
+
+
+# --- I5: `lc config` is the only way back from a moved solutions repo. ---
+
+def test_config_shows_settings(cfg):
+    result = runner.invoke(cli.app, ["config"])
+    assert result.exit_code == 0
+    assert "repo_path" in result.stdout
+
+
+def test_config_repoints_repo_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    from leetgrind.config import load_config
+    moved = tmp_path / "moved"
+    result = runner.invoke(cli.app, ["config", "--repo-path", str(moved)])
+    assert result.exit_code == 0
+    assert load_config().repo_path == moved
+
+
+def test_config_reports_when_unconfigured(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    result = runner.invoke(cli.app, ["config"])
+    assert result.exit_code == 1
+    assert "not configured" in result.stdout.lower()

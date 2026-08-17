@@ -145,3 +145,35 @@ def test_main_runs_the_first_run_wizard_when_unconfigured(tmp_path, monkeypatch)
     _queue(monkeypatch, "select", ["Quit"])
     menu.main()
     assert (repo / ".git").is_dir()
+
+
+# --- Finding 2: an aborted first-run prompt (Ctrl-C -> questionary returns
+# None) must exit cleanly, not traceback out of Path(None) in wizard.py ---
+
+def test_ensure_config_returns_none_when_the_repo_prompt_is_aborted(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(questionary, "path", lambda *a, **kw: _Ask(None))
+    monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(True))
+    assert menu._ensure_config() is None
+    from leetgrind.config import load_config
+    assert load_config() is None
+
+
+def test_ensure_config_treats_an_aborted_push_prompt_as_a_safe_default(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    repo = tmp_path / "solutions"
+    monkeypatch.setattr(questionary, "path", lambda *a, **kw: _Ask(str(repo)))
+    monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(None))
+    cfg = menu._ensure_config()
+    assert cfg is not None
+    assert cfg.auto_push is False
+
+
+def test_main_exits_cleanly_when_the_first_run_prompt_is_aborted(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(questionary, "path", lambda *a, **kw: _Ask(None))
+    monkeypatch.setattr(questionary, "confirm", lambda *a, **kw: _Ask(True))
+    menu.main()  # must not raise, and must not reach the "What now?" select

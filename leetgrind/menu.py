@@ -40,8 +40,11 @@ def _ensure_config():
     repo = questionary.path(
         "Where should solutions live?",
         default=str(Path.home() / "Documents" / "leetcode-solutions")).ask()
+    if repo is None:
+        console.print("[yellow]Setup cancelled.[/]")
+        return None
     push = questionary.confirm("Push after every commit?").ask()
-    return first_run({"repo_path": repo, "auto_push": push})
+    return first_run({"repo_path": repo, "auto_push": bool(push)})
 
 
 def _solve_loop(cfg, active) -> None:
@@ -62,8 +65,8 @@ def _solve_loop(cfg, active) -> None:
             if not questionary.confirm("Commit anyway?", default=False).ask():
                 continue
         approach = questionary.text("Approach:").ask() or "n/a"
-        time_c = questionary.text("Time complexity:", default="O(n)").ask()
-        space_c = questionary.text("Space complexity:", default="O(1)").ask()
+        time_c = questionary.text("Time complexity:", default="O(n)").ask() or "n/a"
+        space_c = questionary.text("Space complexity:", default="O(1)").ask() or "n/a"
         try:
             result = workflow.finish_problem(cfg, approach, time_c, space_c)
         except workflow.ReadmeUnpatched as exc:
@@ -79,6 +82,8 @@ def _solve_loop(cfg, active) -> None:
 
 def main() -> None:
     cfg = _ensure_config()
+    if cfg is None:
+        return
     while True:
         console.rule(f"LEETGRIND — {_header(cfg)}")
         choice = questionary.select("What now?", choices=[

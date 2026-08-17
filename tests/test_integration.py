@@ -23,6 +23,7 @@ def test_full_loop_produces_exactly_two_commits(tmp_path, monkeypatch):
     workflow.finish_problem(cfg, "hash map", "O(n)", "O(n)")
 
     subjects = git(cfg.repo_path, "log", "--pretty=%s").splitlines()
+    assert len(subjects) == 2
     assert subjects[0] == "Solve 1: Two Sum (hash map, O(n))"
     assert subjects[1] == "Start 1: Two Sum (Easy)"
     assert git(cfg.repo_path, "status", "--porcelain") == ""

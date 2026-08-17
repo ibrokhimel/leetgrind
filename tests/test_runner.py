@@ -1,4 +1,33 @@
+import tomllib
+from pathlib import Path
+
 from leetgrind.runner import run_tests
+
+
+# --- C4: run_tests shells out to `-m pytest` as the gate inside `lc done`, so
+#     a plain `pip install .` without pytest yields a tool whose main command
+#     always fails. It is a runtime dependency, not a dev extra. ---
+
+def test_pytest_is_declared_as_a_runtime_dependency():
+    root = Path(__file__).resolve().parent.parent
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    runtime = " ".join(data["project"]["dependencies"])
+    assert "pytest" in runtime, "`lc done` cannot run its test gate without pytest"
+    dev = " ".join(data["project"].get("optional-dependencies", {}).get("dev", []))
+    assert "pytest" not in dev, "pytest must not be duplicated as a dev extra"
+
+
+def test_no_unused_dependencies_are_declared():
+    """M1: pyperclip was declared and imported nowhere."""
+    root = Path(__file__).resolve().parent.parent
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    sources = "\n".join(p.read_text(encoding="utf-8")
+                        for p in (root / "leetgrind").glob("*.py"))
+    for dep in data["project"]["dependencies"]:
+        name = dep.split(">")[0].split("=")[0].strip().replace("-", "_")
+        if name == "pytest":
+            continue  # invoked as a subprocess, never imported
+        assert name in sources, f"{name} is declared but imported nowhere"
 
 def scaffold(folder, solution, test):
     folder.mkdir(parents=True, exist_ok=True)

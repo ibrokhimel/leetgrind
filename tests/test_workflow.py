@@ -202,3 +202,88 @@ def test_finish_raises_without_an_active_problem(cfg):
 def test_park_raises_without_an_active_problem(cfg):
     with pytest.raises(workflow.NoActiveProblem):
         workflow.park_problem(cfg)
+
+
+# --- C1: push()'s boolean was discarded at both call sites, so a user could
+#     accrue perfect local commits and an empty contribution graph in silence. ---
+
+def test_a_failed_push_is_reported_on_start(cfg, monkeypatch, capsys):
+    from dataclasses import replace
+    monkeypatch.setattr(workflow, "push", lambda repo: False)
+    workflow.start_problem(replace(cfg, auto_push=True), "two-sum")
+    assert "push failed" in capsys.readouterr().out
+
+
+def test_a_failed_push_is_reported_on_finish(cfg, monkeypatch, capsys):
+    from dataclasses import replace
+    pushing = replace(cfg, auto_push=True)
+    monkeypatch.setattr(workflow, "push", lambda repo: True)
+    workflow.start_problem(pushing, "two-sum")
+    capsys.readouterr()
+    monkeypatch.setattr(workflow, "push", lambda repo: False)
+    workflow.finish_problem(pushing, "hash map", "O(n)", "O(n)")
+    assert "push failed" in capsys.readouterr().out
+
+
+def test_a_successful_push_says_nothing(cfg, monkeypatch, capsys):
+    from dataclasses import replace
+    monkeypatch.setattr(workflow, "push", lambda repo: True)
+    workflow.start_problem(replace(cfg, auto_push=True), "two-sum")
+    assert "push failed" not in capsys.readouterr().out
+
+
+def test_push_is_not_attempted_when_auto_push_is_off(cfg, monkeypatch):
+    monkeypatch.setattr(workflow, "push",
+                        lambda repo: pytest.fail("auto_push is off"))
+    workflow.start_problem(cfg, "two-sum")
+
+
+# --- I8: re-starting an existing folder stages nothing, so commit_paths
+#     returned False and the Start commit silently never happened. ---
+
+def test_restarting_an_existing_folder_tells_the_user_it_is_resuming(cfg, capsys):
+    from leetgrind.state import clear_active
+    workflow.start_problem(cfg, "two-sum")
+    clear_active(cfg.repo_path)  # e.g. the window was closed mid-attempt
+    before = git(cfg.repo_path, "log", "--pretty=%s").splitlines()
+    capsys.readouterr()
+    workflow.start_problem(cfg, "two-sum")
+    # Rich hard-wraps at the terminal width, so compare on collapsed whitespace.
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Resuming 0001-two-sum" in out
+    assert "no new Start commit" in out
+    assert git(cfg.repo_path, "log", "--pretty=%s").splitlines() == before
+
+
+# --- C3 fallout: open_problem's False was discarded, so a launch that never
+#     happened looked identical to one that did. ---
+
+def test_a_failed_editor_launch_is_reported(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(editor, "open_problem", lambda folder: False)
+    workflow.start_problem(cfg, "two-sum")
+    assert "VS Code did not open" in capsys.readouterr().out
+
+
+# --- I6: approach/time/space are interpolated into re.subn's *replacement*,
+#     which is a template - user text must not be parsed as one. ---
+
+@pytest.mark.parametrize("approach", [
+    r"used \g<1> backreference notation",
+    r"two pointers\nthen a sweep",
+    "trailing backslash \\",
+])
+def test_regex_metacharacters_in_the_approach_land_verbatim(cfg, approach):
+    workflow.start_problem(cfg, "two-sum")
+    subject = workflow.finish_problem(cfg, approach, "O(n)", "O(1)")
+    readme = (cfg.repo_path / "0001-two-sum" / "README.md").read_text(encoding="utf-8")
+    assert f"**Approach:** {approach}" in readme
+    # The README's line structure must survive: Approach stays one line.
+    assert sum(1 for line in readme.splitlines() if line.startswith("**Approach:**")) == 1
+    assert approach in subject
+
+
+def test_regex_metacharacters_in_the_complexities_land_verbatim(cfg):
+    workflow.start_problem(cfg, "two-sum")
+    workflow.finish_problem(cfg, "ok", r"O(n) \g<0>", r"O(1)\n")
+    readme = (cfg.repo_path / "0001-two-sum" / "README.md").read_text(encoding="utf-8")
+    assert r"**Time:** O(n) \g<0>  **Space:** O(1)\n" in readme

@@ -48,3 +48,18 @@ def test_root_readme_contains_a_row_per_problem():
     assert "| 1 |" in out
     assert "[Two Sum](0001-two-sum/)" in out
     assert "Easy" in out
+
+
+# --- I5: menu._header scans on every render. A moved, renamed, or
+#     disconnected solutions repo must not crash the menu before it draws. ---
+
+def test_scan_returns_empty_for_a_missing_repo(tmp_path):
+    from leetgrind.stats import scan_solutions
+    assert scan_solutions(tmp_path / "not-there") == []
+
+
+def test_scan_returns_empty_when_the_path_is_a_file(tmp_path):
+    from leetgrind.stats import scan_solutions
+    f = tmp_path / "a-file"
+    f.write_text("not a repo", encoding="utf-8")
+    assert scan_solutions(f) == []

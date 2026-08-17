@@ -20,20 +20,32 @@ def _escape_powershell_string(s: str) -> str:
     return s
 
 
-def code_available() -> bool:
+def code_exe() -> str | None:
+    """The resolved `code` launcher, or None if it is not on PATH.
+
+    Callers must launch this *path*, never the bare name "code". shutil.which
+    honours PATHEXT and finds `code.CMD` on Windows, but CreateProcess only
+    ever appends `.exe` - so a bare "code" raises FileNotFoundError even
+    though the availability check passed.
+    """
     try:
-        return shutil.which("code") is not None
+        return shutil.which("code")
     except Exception:
-        return False
+        return None
+
+
+def code_available() -> bool:
+    return code_exe() is not None
 
 
 def open_problem(folder: Path) -> bool:
     """Open a new VS Code window on `folder` with solution.py focused."""
-    if not code_available():
+    exe = code_exe()
+    if exe is None:
         return False
     try:
-        subprocess.run(["code", "-n", str(folder)], check=False)
-        subprocess.run(["code", "-g", str(folder / "solution.py")], check=False)
+        subprocess.run([exe, "-n", str(folder)], check=False)
+        subprocess.run([exe, "-g", str(folder / "solution.py")], check=False)
         return True
     except OSError:
         return False

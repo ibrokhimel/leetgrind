@@ -20,6 +20,11 @@ class SolvedEntry:
 
 
 def scan_solutions(repo: Path) -> list[SolvedEntry]:
+    if not repo.is_dir():
+        # menu._header calls this on every render. A moved, renamed, or
+        # disconnected solutions repo must degrade to "0 solved" so the menu
+        # still draws and `lc config --repo-path` is reachable.
+        return []
     entries: list[SolvedEntry] = []
     for child in sorted(repo.iterdir()):
         if not child.is_dir() or not (m := _FOLDER_RE.match(child.name)):

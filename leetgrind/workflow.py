@@ -5,6 +5,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from rich.console import Console
+
 from . import editor
 from .config import Config
 from .examples import Example, extract_examples
@@ -16,6 +18,8 @@ from .state import (ActiveProblem, cache_get, cache_put, clear_active,
                     elapsed_minutes, load_active, save_active)
 from .stats import render_root_readme, scan_solutions
 from .urls import parse_slug
+
+console = Console()
 
 
 class ProblemActive(Exception):
@@ -73,6 +77,16 @@ def _fetch_with_cache(repo: Path, slug: str,
     return problem, examples
 
 
+def _commit_and_push(cfg: Config, paths: list[Path], subject: str) -> bool:
+    """False when nothing was staged. A failed push is always reported: the commit
+    is safe locally, but the graph does not update until it reaches the remote."""
+    committed = commit_paths(cfg.repo_path, paths, subject)
+    if cfg.auto_push and not push(cfg.repo_path):
+        console.print("[yellow]commit saved locally; push failed, will retry.[/]"
+                      " Run `lc doctor`.")
+    return committed
+
+
 def start_problem(cfg: Config, text: str, *, number: int | None = None) -> ActiveProblem:
     if load_active(cfg.repo_path) is not None:
         raise ProblemActive("park or resume the active problem first")
@@ -89,22 +103,28 @@ def start_problem(cfg: Config, text: str, *, number: int | None = None) -> Activ
 
     # Ruling 2: init_repo writes .gitignore/.gitattributes but never commits
     # them, so the first start must, or the working tree never goes clean.
-    commit_paths(cfg.repo_path,
-                 [folder, cfg.repo_path / ".gitignore", cfg.repo_path / ".gitattributes"],
-                 f"Start {problem.id}: {problem.title} ({problem.difficulty})")
-    if cfg.auto_push:
-        push(cfg.repo_path)
+    started = _commit_and_push(
+        cfg, [folder, cfg.repo_path / ".gitignore", cfg.repo_path / ".gitattributes"],
+        f"Start {problem.id}: {problem.title} ({problem.difficulty})")
+    if not started:
+        console.print(f"[yellow]Resuming {problem.folder_name}[/] - it was already "
+                      "scaffolded, so this attempt has no new Start commit.")
 
     active = ActiveProblem(id=problem.id, slug=problem.slug, title=problem.title,
                            difficulty=problem.difficulty, folder=problem.folder_name,
                            started_at=datetime.now(timezone.utc).isoformat())
     save_active(cfg.repo_path, active)
-    editor.open_problem(folder)
+    if not editor.open_problem(folder):
+        console.print(f"[yellow]VS Code did not open.[/] Open {folder} yourself.")
     return active
 
 
 def _patch_readme(path: Path, approach: str, time_c: str, space_c: str, minutes: int) -> None:
     text = path.read_text(encoding="utf-8")
+    # re.subn reads its replacement as a *template*: a `\g<1>` typed into the
+    # approach raises re.error and a `\n` injects a real newline. Doubling the
+    # backslashes makes the user's text land verbatim.
+    approach, time_c, space_c = (s.replace("\\", "\\\\") for s in (approach, time_c, space_c))
     text, n1 = re.subn(r"\*\*Approach:\*\*.*", f"**Approach:** {approach}", text, count=1)
     text, n2 = re.subn(r"\*\*Time:\*\*.*", f"**Time:** {time_c}  **Space:** {space_c}",
                        text, count=1)
@@ -120,9 +140,7 @@ def _patch_readme(path: Path, approach: str, time_c: str, space_c: str, minutes:
 def _finalise(cfg: Config, active: ActiveProblem, subject: str) -> str:
     root_readme = cfg.repo_path / "README.md"
     root_readme.write_text(render_root_readme(scan_solutions(cfg.repo_path)), encoding="utf-8")
-    commit_paths(cfg.repo_path, [cfg.repo_path / active.folder, root_readme], subject)
-    if cfg.auto_push:
-        push(cfg.repo_path)
+    _commit_and_push(cfg, [cfg.repo_path / active.folder, root_readme], subject)
     if cfg.auto_close:
         editor.close_window(active.folder)
     clear_active(cfg.repo_path)
